@@ -5,104 +5,103 @@
 #include <QWidget>
 #include <QColor>
 #include <QCursor>
+#include <QHBoxLayout>
+#include <QPointF>
+#include <QRegion>
 #include <QSlider>
+#include <QTimer>
 #include <QToolButton>
 
-class AnnotationNode;   // forward — overlay calls back to node for persistence
+class AnnotationNode;
+namespace DagFinder { QWidget* findDagViewport(); }
 
-// ---------------------------------------------------------------------------
-// DagFinder
-//   Locates the Nuke Node Graph QWidget by walking Qt's widget tree.
-//   Returns nullptr if the panel cannot be found.
-// ---------------------------------------------------------------------------
-namespace DagFinder
-{
-    QWidget* findDagViewport();
-}
+struct DagTransform {
+    float   zoom   = 1.0f;
+    QPointF center = {0,0};
+};
 
-// ---------------------------------------------------------------------------
-// PenToolbar
-//   Small floating tool palette (Qt::Tool window) that sits above the DAG
-//   overlay. Provides colour, width, eraser, undo, clear, and exit controls.
-// ---------------------------------------------------------------------------
-class PenToolbar : public QWidget
-{
+class PenToolbar : public QWidget {
     Q_OBJECT
-
 public:
     explicit PenToolbar(QWidget* parent = nullptr);
-
     QColor currentColor() const { return m_color; }
     float  currentWidth() const;
     bool   isEraser()     const { return m_eraserActive; }
-
+    void   setGhostMode(bool on);
+    void   fitToWidth(int w);   // resize to match DAG width
 signals:
     void colorChanged(QColor);
     void widthChanged(int);
     void eraserToggled(bool);
     void clearAll();
     void undoRequested();
+    void ghostToggled(bool);
     void closeRequested();
-
+    void anyButtonPressed();
 private slots:
     void pickColor();
-
 private:
     void updateColorSwatch();
-
-    QColor       m_color        = QColor(255, 200, 50);
-    QSlider*     m_widthSlider  = nullptr;
-    QToolButton* m_colorBtn     = nullptr;
+    QHBoxLayout* m_layout      = nullptr;
+    QColor       m_color       = QColor(255, 200, 50);
+    QSlider*     m_widthSlider = nullptr;
+    QToolButton* m_colorBtn    = nullptr;
+    QToolButton* m_ghostBtn    = nullptr;
     bool         m_eraserActive = false;
 };
 
-// ---------------------------------------------------------------------------
-// PenOverlay
-//   A transparent QWidget child of the DAG panel. Intercepts mouse events
-//   to record strokes, and repaints them using Qt's painter API.
-//   The overlay syncs stroke data back to its owning AnnotationNode so that
-//   strokes are persisted in the .nk script automatically.
-// ---------------------------------------------------------------------------
-class PenOverlay : public QWidget
-{
+class PenOverlay : public QWidget {
     Q_OBJECT
-
 public:
-    explicit PenOverlay(QWidget* dagParent, AnnotationNode* node);
+    explicit PenOverlay(QWidget* dagViewport, AnnotationNode* node);
     ~PenOverlay() override;
 
     void activate();
     void deactivate();
-    bool isActive() const { return m_active; }
+    bool isActive()    const { return m_active; }
+    bool isGhostMode() const { return m_ghostMode; }
 
     void             loadStrokes(const StrokeSet& set);
-    const StrokeSet& strokeSet()  const { return m_strokeSet; }
+    const StrokeSet& strokeSet() const { return m_strokeSet; }
 
 protected:
     void paintEvent(QPaintEvent*)        override;
+    void resizeEvent(QResizeEvent*)      override;
     void mousePressEvent(QMouseEvent*)   override;
     void mouseMoveEvent(QMouseEvent*)    override;
     void mouseReleaseEvent(QMouseEvent*) override;
-    void resizeEvent(QResizeEvent*)      override;
+    void wheelEvent(QWheelEvent*)        override;
     void keyPressEvent(QKeyEvent*)       override;
 
-private:
-    void commitCurrentStroke();
+private slots:
+    void onUndo();
+    void onClear();
+    void onGhostToggled(bool on);
     void syncToNode();
-    void repositionToolbar();
+    void onPollTimer();
+
+private:
+    QPointF screenToDag(QPointF screen) const;
+    QPointF dagToScreen(QPointF dag)    const;
+    void    paintStrokeInDagSpace(QPainter& p, const PenStroke& stroke) const;
+    DagTransform queryDagTransform() const;
+    void repositionOverlay();
+    void updateMask();
     void buildPenCursor();
+    void forwardMousePress(QMouseEvent* e);
 
-    static void paintStroke(QPainter& painter, const PenStroke& stroke);
+    QWidget*        m_dagViewport = nullptr;
+    AnnotationNode* m_node        = nullptr;
+    PenToolbar*     m_toolbar     = nullptr;
+    QTimer*         m_pollTimer   = nullptr;
 
-    QWidget*        m_dagParent     = nullptr;
-    AnnotationNode* m_node          = nullptr;
-    PenToolbar*     m_toolbar       = nullptr;
-
-    StrokeSet       m_strokeSet;
-    PenStroke       m_currentStroke;
-
-    bool            m_drawing       = false;
-    bool            m_active        = false;
-
-    QCursor         m_penCursor;
+    StrokeSet    m_strokeSet;
+    PenStroke    m_currentStroke;
+    bool         m_drawing   = false;
+    bool         m_active    = false;
+    bool         m_ghostMode = false;
+    DagTransform m_transform;
+    QPoint       m_lastDagPos;
+    QSize        m_lastDagSize;
+    QCursor      m_penCursor;
 };

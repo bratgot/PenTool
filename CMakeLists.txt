@@ -91,29 +91,74 @@ if(MSVC)
 endif()
 
 # =============================================================================
-# Qt 5.15
+# Qt
 #
-# Nuke 15, 16, and 17 all ship Qt 5.15.x on Windows. The cmake config files
-# live inside the Nuke install tree — no separate Qt SDK needed.
+# Nuke 15 / 16  →  Qt 5.15
+# Nuke 17+      →  Qt 6.x  (Foundry switched in Nuke 17)
 #
-# Expected location: <NUKE_ROOT>/lib/cmake/Qt5/Qt5Config.cmake
+# The Qt cmake config files live inside the Nuke install tree.
+# Expected location (Nuke 17):
+#   <NUKE_ROOT>/lib/cmake/Qt6/Qt6Config.cmake
 # =============================================================================
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt5 5.15
-    REQUIRED COMPONENTS Core Widgets Gui OpenGL
-    HINTS
-        "${NUKE_ROOT}"
-        "${NUKE_ROOT}/lib/cmake"
-    PATH_SUFFIXES
-        "lib/cmake/Qt5"
-        "cmake/Qt5"
-        "cmake"
+# ---------------------------------------------------------------------------
+# Qt auto-detection
+#
+# Nuke 17 ships Qt6 runtime DLLs but NOT the SDK headers/import libs.
+# We look for a Qt6 MSVC 2019 x64 SDK in standard install locations.
+# Override by passing:  -DQt6_DIR="C:/Qt/6.5.3/msvc2019_64/lib/cmake/Qt6"
+# ---------------------------------------------------------------------------
+if(NOT Qt6_DIR)
+    foreach(_base "C:/Qt" "D:/Qt" "$ENV{USERPROFILE}/Qt")
+        if(NOT EXISTS "${_base}")
+            continue()
+        endif()
+        # Collect all 6.x version dirs, sort highest first
+        file(GLOB _vers LIST_DIRECTORIES true "${_base}/6.*")
+        list(SORT _vers ORDER DESCENDING)
+        foreach(_ver ${_vers})
+            set(_candidate "${_ver}/msvc2019_64/lib/cmake/Qt6")
+            if(EXISTS "${_candidate}/Qt6Config.cmake")
+                set(Qt6_DIR "${_candidate}" CACHE PATH "Qt6 cmake dir" FORCE)
+                break()
+            endif()
+        endforeach()
+        if(Qt6_DIR)
+            break()
+        endif()
+    endforeach()
+endif()
+
+if(NOT Qt6_DIR OR NOT EXISTS "${Qt6_DIR}/Qt6Config.cmake")
+    message(FATAL_ERROR
+        "Qt6 SDK not found.\n"
+        "Nuke 17 ships Qt6 DLLs but not the build SDK.\n"
+        "Install Qt6 from https://www.qt.io/download-qt-installer\n"
+        "  Select: Qt 6.x.x -> MSVC 2019 64-bit\n"
+        "Then pass: -DQt6_DIR=\"C:/Qt/6.x.x/msvc2019_64/lib/cmake/Qt6\"\n"
+        "\n"
+        "Check Nuke's Qt version:\n"
+        "  (Get-Item 'C:/Program Files/Nuke17.0v1/Qt6Core.dll').VersionInfo.FileVersion")
+endif()
+
+message(STATUS "Qt6_DIR : ${Qt6_DIR}")
+
+# Derive the Qt SDK root (three levels up from lib/cmake/Qt6)
+# and add it to CMAKE_PREFIX_PATH so Qt's tool dependencies
+# (Qt6GuiTools, Qt6WidgetsTools, moc, uic etc.) are all found.
+get_filename_component(_qt_root "${Qt6_DIR}/../../.." ABSOLUTE)
+list(APPEND CMAKE_PREFIX_PATH "${_qt_root}")
+message(STATUS "Qt6 root : ${_qt_root}")
+
+find_package(Qt6 REQUIRED
+    COMPONENTS Core Widgets Gui OpenGL OpenGLWidgets
 )
 
-message(STATUS "Qt5 version : ${Qt5_VERSION}")
-message(STATUS "Qt5 dir     : ${Qt5Core_DIR}")
+message(STATUS "Qt6 version : ${Qt6_VERSION}")
+
+set(QT_LIBS Qt6::Core Qt6::Widgets Qt6::Gui Qt6::OpenGL Qt6::OpenGLWidgets)
 
 # =============================================================================
 # NDK paths
@@ -161,15 +206,18 @@ target_include_directories(PenTool
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${NDK_INCLUDE_DIR}
+        # No Python.h needed — Python API loaded at runtime via GetProcAddress
 )
+
+if(WIN32)
+    # No python3xx.lib in Nuke install — symbols resolved at runtime via GetProcAddress
+    message(STATUS "Python: resolved at runtime from Nuke's loaded python3xx.dll")
+endif()
 
 target_link_libraries(PenTool
     PRIVATE
         ${NDK_LIB}
-        Qt5::Core
-        Qt5::Widgets
-        Qt5::Gui
-        Qt5::OpenGL
+        ${QT_LIBS}
 )
 
 # =============================================================================
@@ -179,12 +227,14 @@ target_link_libraries(PenTool
 # ── Windows / MSVC ──────────────────────────────────────────────────────────
 if(WIN32)
     target_compile_options(PenTool PRIVATE
-        /W3             # Warning level 3
-        /WX-            # Warnings are not errors (NDK headers can be noisy)
+        /W3
+        /WX-
         /wd4251         # 'X needs dll-interface' — expected for STL members
-        /wd4275         # Non-DLL-interface base class — same reason
-        /MP             # Multi-processor compilation
-        /permissive-    # Stricter standard conformance
+        /wd4275         # Non-DLL-interface base class
+        /wd4996         # Suppress STLAllocator/Description deprecation warnings from NDK headers
+        /wd4244         # Suppress streamsize narrowing from NDK headers
+        /MP
+        /permissive-
     )
 
     target_compile_definitions(PenTool PRIVATE

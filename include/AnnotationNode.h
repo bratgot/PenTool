@@ -46,6 +46,7 @@ public:
 private:
     void activatePenOverlay();
 
+    // Nuke 17 String_knob binds directly to std::string
     std::string      m_strokeData;
     DD::Image::Knob* m_strokeKnob   = nullptr;
     DD::Image::Knob* m_activateKnob = nullptr;

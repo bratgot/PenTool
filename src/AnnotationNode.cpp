@@ -13,9 +13,10 @@
 
 const char* AnnotationNode::CLASS = "AnnotationNode";
 
+// Nuke 17: Description(menu, constructor) overload is deprecated.
+// Use the single-argument form; menu registration is done in menu.py.
 const DD::Image::Op::Description AnnotationNode::desc(
     AnnotationNode::CLASS,
-    "Other/AnnotationNode",
     AnnotationNode::build
 );
 
@@ -50,9 +51,11 @@ AnnotationNode::~AnnotationNode()
 
 void AnnotationNode::setStrokeData(const std::string& data)
 {
+    // The String_knob is bound directly to m_strokeData via pointer.
+    // Just update the string — Nuke reads it on script save automatically.
+    // Do NOT call set_text() here; it re-enters the knob system and crashes
+    // when called from a Qt signal handler (even deferred via QTimer).
     m_strokeData = data;
-    if (m_strokeKnob)
-        m_strokeKnob->set_text(data.c_str());
 }
 
 std::string AnnotationNode::getStrokeData() const
@@ -66,10 +69,11 @@ std::string AnnotationNode::getStrokeData() const
 
 void AnnotationNode::knobs(DD::Image::Knob_Callback f)
 {
-    // Hidden string knob — persisted to .nk, not shown in the Properties panel
-    m_strokeKnob = String_knob(f, m_strokeData.empty() ? "" : m_strokeData.c_str(),
-                               "stroke_data", "Stroke Data");
-    SetFlags(f, DD::Image::Knob::INVISIBLE | DD::Image::Knob::DO_NOT_WRITE_IF_DEFAULT);
+    // Hidden string knob — persisted to .nk, not shown in Properties panel.
+    // Nuke 17 NDK: String_knob takes (callback, &string, name, label).
+    // DO_NOT_WRITE_IF_DEFAULT was removed; INVISIBLE alone is sufficient.
+    m_strokeKnob = String_knob(f, &m_strokeData, "stroke_data", "Stroke Data");
+    SetFlags(f, DD::Image::Knob::INVISIBLE);
     Tooltip(f, "Serialised stroke data — managed automatically, do not edit.");
 
     Divider(f, "Pen Tool");
@@ -79,10 +83,10 @@ void AnnotationNode::knobs(DD::Image::Knob_Callback f)
         "Strokes are saved with this node in the .nk script.\n"
         "Shortcut: Ctrl+Shift+P");
 
-    m_activateKnob = Button(f, "activate_pen", "\u270F  Activate Pen Tool");
+    m_activateKnob = Button(f, "activate_pen", "Activate Pen Tool");
     Tooltip(f, "Toggle the freehand pen overlay on the Node Graph.");
 
-    Button(f, "clear_strokes", "\U0001F5D1  Clear All Strokes");
+    Button(f, "clear_strokes", "Clear All Strokes");
     Tooltip(f, "Permanently remove all strokes stored in this node.");
 }
 
